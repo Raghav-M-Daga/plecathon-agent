@@ -33,6 +33,9 @@ export default async function handler(req, res) {
       return res.end();
     }
     if (req.method === 'GET' && pathname.endsWith('/health')) return json(res, 200, { ok: true });
+    if (req.method === 'GET' && pathname.endsWith('/envcheck')) {
+      return json(res, 200, { keys: Object.keys(process.env).filter((k) => /LLM|PLEC|AGENT/.test(k)).sort(), llm: (process.env.LLM_API_KEY || '').length, sandbox: (process.env.PLEC_SANDBOX_KEY || '').length, model: process.env.LLM_MODEL || null, base: process.env.LLM_BASE_URL || null });
+    }
     if (req.method === 'POST' && pathname.endsWith('/messages')) return await handleMessage(req, res);
     if (req.method === 'POST' && pathname.endsWith('/reset')) return await handleReset(req, res);
     return json(res, 404, { error: 'not_found', message: `No route ${req.method} ${pathname}` });

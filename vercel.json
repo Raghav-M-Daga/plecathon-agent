@@ -6,7 +6,17 @@
     }
   },
   "rewrites": [
-    { "source": "/agent/:path*", "destination": "/api" },
-    { "source": "/health", "destination": "/api" }
+    {
+      "source": "/agent/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/health",
+      "destination": "/api"
+    },
+    {
+      "source": "/envcheck",
+      "destination": "/api"
+    }
   ]
 }
