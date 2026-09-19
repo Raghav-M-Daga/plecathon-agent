@@ -47,6 +47,14 @@ const STOPWORDS = new Set([
   'please', 'would', 'could', 'much', 'cost', 'price', 'available', 'october', 'november', 'december',
 ]);
 
+/**
+ * Cities people ask for that are not in the catalogue. Without this the
+ * remembered city wins and "what about Dallas" gets answered about
+ * Philadelphia, which reads as if nobody is listening.
+ */
+const OTHER_CITIES =
+  /\b(houston|austin|dallas|san antonio|chicago|boston|miami|los angeles|san francisco|seattle|denver|atlanta|phoenix|nashville|new orleans|las vegas|detroit|pittsburgh|baltimore|toronto|ontario|london|paris)\b/i;
+
 const BOOKING_INTENT = /\b(book|reserve|reservar|r[ée]server|prenotare|buchen|lock (?:it|in)|confirm)\b/i;
 const CHANGE_INTENT = /\b(cancel|cancelar|annuler|reschedule|move|change the date|posponer|cambiar)\b/i;
 const FACT_INTENT = /\b(hold|holds|capacity|fit|fits|how many|cu[áa]nt|how much|price|cost|open|hours|address|where|amenit|parking)\b/i;
@@ -87,7 +95,16 @@ export async function offlineReply({ text, session, turn }) {
     return { text: listingFacts(listing, language), listings: [listing] };
   }
 
-  const city = cityInText(value) || state.city;
+  const named = cityInText(value);
+  if (!named && OTHER_CITIES.test(value)) {
+    return {
+      text:
+        language === 'es'
+          ? 'PLEC solo cubre Filadelfia, Nueva York y Washington por ahora. ¿Te busco algo en una de esas tres?'
+          : 'PLEC only covers Philadelphia, New York and Washington at the moment. Shall I look in one of those three?',
+    };
+  }
+  const city = named || state.city;
   const guests = guestsIn(value) ?? state.guestCount;
   if (city) {
     const service = SERVICE_WORDS.find(([, pattern]) => pattern.test(value));
@@ -96,12 +113,25 @@ export async function offlineReply({ text, session, turn }) {
       kind: service ? 'service' : 'venue',
       ...(service ? { category: service[0] } : {}),
       ...(Number.isFinite(guests) ? { guests } : {}),
-      limit: 6,
+      limit: 3,
     };
     const date = dateIn(value) ?? state.date;
     if (date) filters.date = date;
 
-    const found = await plec.searchListings(filters).catch(() => null);
+    let found;
+    try {
+      found = await plec.searchListings(filters);
+    } catch (err) {
+      // Saying "nothing matched" when the catalogue was unreachable is a lie,
+      // and it is the kind that sends someone looking somewhere else.
+      console.error('[fallback] search failed:', err?.message ?? err);
+      return {
+        text:
+          language === 'es'
+            ? 'No consigo conectar con el catálogo ahora mismo, así que no puedo confirmar qué hay libre. ¿Lo intentamos de nuevo en un momento?'
+            : 'I cannot reach the catalogue right now, so I cannot tell you what is free. Can we try again in a moment?',
+      };
+    }
     const results = found?.results ?? [];
     if (results.length) {
       const what = service ? service[0] : 'venue';
@@ -176,7 +206,7 @@ function guestsIn(text) {
 }
 
 /** "October 10", "10 October", "2026-10-10" -> ISO, assuming the next time it comes round. */
-function dateIn(text) {
+export function dateIn(text) {
   const value = String(text);
   const iso = value.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
   if (iso) return iso[0];

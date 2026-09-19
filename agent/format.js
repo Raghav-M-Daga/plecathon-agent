@@ -91,6 +91,24 @@ export function cardFor(listing) {
   };
 }
 
+/**
+ * A rough all-in price for ranking listings against each other and against a
+ * budget. It mirrors the sandbox formula, but it is an estimate and never a
+ * quoted figure: anything said to the user still comes from quote().
+ */
+export function estimateCents(listing, { hours, guests } = {}) {
+  const pricing = listing?.pricing;
+  if (!pricing || !Number.isFinite(pricing.rateCents)) return null;
+  const headcount = Number.isFinite(guests) ? guests : listing?.capacity?.min ?? 1;
+  const span = Math.max(Number.isFinite(hours) ? hours : pricing.minHours ?? 1, pricing.minHours ?? 1);
+  const base =
+    pricing.model === 'hourly' ? pricing.rateCents * span
+    : pricing.model === 'perGuest' ? pricing.rateCents * headcount
+    : pricing.rateCents;
+  const subtotal = base + (pricing.cleaningFeeCents ?? 0);
+  return Math.round(subtotal * 1.1); // the sandbox adds a 10% service fee
+}
+
 /** Does this listing seat the group? Listings without a capacity serve any size. */
 export function fitsCapacity(listing, guestCount) {
   if (!Number.isFinite(guestCount)) return true;

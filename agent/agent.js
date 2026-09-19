@@ -31,8 +31,8 @@ import {
   todayISO,
   truthGuard,
 } from './guards.js';
-import { cardFor, detectLanguage, fitsCapacity, phrase, usd } from './format.js';
-import { offlineReply } from './fallback.js';
+import { cardFor, detectLanguage, estimateCents, fitsCapacity, phrase, usd } from './format.js';
+import { dateIn, offlineReply } from './fallback.js';
 
 /* ============================================================== the prompt = */
 
@@ -94,6 +94,14 @@ ASKING WELL
 
 To search venues you want the city and the headcount, and the date if they have one. To search services you want the city and the kind of service. When any of that is missing, ask for the missing pieces in one sentence ("Which city, what date, and roughly how many guests?"). When the user already gave them, even several turns ago, use them: never ask twice for something you have been told. When they give you everything in one message, go straight to the search.
 
+Before you put options in front of anyone you want five things: the city, roughly how many people, the date, what the occasion is, and a rough budget. The occasion and the budget steer the answer as much as the headcount does, because a fortieth birthday, a board offsite and a memorial want different rooms at different prices. When the occasion or the budget is missing, ask for it in one short question before you search, and say why you are asking if it is not obvious.
+
+Two things stop that becoming obstructive. If they have already asked to see options and you have at least the city and the headcount, search now, show your three, and ask the refining question in the same reply rather than making them wait a turn. And never ask for a detail twice, or for one they clearly do not have yet ("I am not sure of the date") : work with what they have given you and say what you assumed.
+
+Three options, never more. Pick the three that are genuinely different from each other, say in one line what separates them, and offer to go wider if none land. A wall of ten listings is not helpfulness, it is the search results page they came here to avoid.
+
+A follow-up that names a requirement is an edit to the request you are already working on, not a new one. "Something cheaper", "more people", "somewhere bigger", "under $2,000", "make it the 17th", "what about a garden instead": change only the thing they changed, keep the city, the date, the headcount, the occasion and the budget you already have, and search again with the lot. Never drop a constraint they gave you earlier and never make them repeat one. If they give a budget, treat it as a requirement: show what comes in under it, and if nothing does, say so and show the closest instead of quietly ignoring it. If they ask for cheaper, cheaper means cheaper than what you just showed them.
+
 A city on its own is not enough to search well, because the right room for a five year old's birthday is the wrong room for a launch party or a wedding. When someone names a city and nothing else, do not list venues at it. Ask what they are planning: the occasion, roughly how many people, and when. You can mention in the same breath that PLEC books the services around the event too, a DJ, catering, a photographer, so they know what is on the table. One question, not an interrogation: gather the occasion, the headcount and the date together, then search.
 
 If a message is empty of meaning (keyboard mash, a stray emoji, a single word you cannot place), do not guess and do not search: say plainly that you did not catch it and ask what they are looking for.
@@ -140,7 +148,7 @@ SHOWING LISTINGS
 
 When you want the user to see listings, end your reply with a line of ids from the tool results, and nothing after it:
 CARDS: foundry-fishtown, schuylkill-boathouse
-Use PHOTOS: <ids> instead when they asked to see photos of a place, and LINKS: <ids> when they asked where something is. You may use more than one line. Only ids that came back from a tool in this conversation are allowed, at most six, and only ones that genuinely fit what the user asked for. Never write the words CARDS, PHOTOS or LINKS in the sentences themselves, and never describe a listing you are not showing a card for.
+Use PHOTOS: <ids> instead when they asked to see photos of a place, and LINKS: <ids> when they asked where something is. You may use more than one line. Only ids that came back from a tool in this conversation are allowed, never more than three, and only ones that genuinely fit what the user asked for. Three good options are a recommendation; ten is a search results page, and it makes the person do your job. Never write the words CARDS, PHOTOS or LINKS in the sentences themselves, and never describe a listing you are not showing a card for.
 
 A card only exists if you searched for that listing in this turn and put its id on the CARDS line. Nothing is ever shown automatically, so never write "here are some venues" in a turn where you did not search: search first, in that same turn, then show them.
 
@@ -208,7 +216,7 @@ const CORE_PROMPT = `You are PLEC Concierge, PLEC's booking agent for event venu
 - Two to four short sentences. No markdown, no bullet lists of venues, no emoji, no tool names. Money as $1,815.00, times as 6:00pm, dates as October 10. One question per turn, and if you need something back from the user, end with it and a question mark.
 - To show listings, end with a line of ids from the results, nothing after it:
 CARDS: foundry-fishtown, schuylkill-boathouse
-Use PHOTOS: for photos and LINKS: for a map. Only ids a tool returned, at most six, and never write those words in your sentences. The card already shows name, area, capacity and price, so do not repeat them in the text.`;
+Use PHOTOS: for photos and LINKS: for a map. Only ids a tool returned, never more than three, and never write those words in your sentences. The card already shows name, area, capacity and price, so do not repeat them in the text.`;
 
 /** The state summary the model sees every turn, so memory does not depend on it re-reading history. */
 function systemPrompt(session, full = true) {
@@ -217,6 +225,13 @@ function systemPrompt(session, full = true) {
     state.city ? `City: ${state.city}.` : '',
     Number.isFinite(state.guestCount) ? `Headcount: ${state.guestCount}.` : '',
     state.date ? `Event date: ${state.date}.` : '',
+    state.occasion ? `Occasion: ${state.occasion}.` : '',
+    Number.isFinite(state.budgetCents)
+      ? `Budget: about ${usd(state.budgetCents)} all in or less. Prefer listings that come in under it, say so plainly if nothing does, and never show something far above it without saying why.`
+      : '',
+    state.preferCheaper ? 'They have asked for something cheaper than what you last showed them.' : '',
+    state.wantsBigger === true ? 'They want more space than the last set.' : '',
+    state.wantsBigger === false ? 'They want something smaller and more intimate than the last set.' : '',
     state.guest?.name || state.guest?.email
       ? `Guest on file (do not ask again): ${state.guest.name ?? 'name unknown'} <${state.guest.email ?? 'email unknown'}>.`
       : '',
@@ -248,6 +263,8 @@ function systemPrompt(session, full = true) {
 /* ================================================================= the loop = */
 
 const MAX_ROUNDS = 6;
+/** Three good options is a recommendation. Ten is a search results page. */
+const MAX_CARDS = 3;
 /**
  * server.js cuts the turn at 40s and the evaluator at 45s. The shared proxy
  * can sit on a single call for 25s under room load, so give it most of that
@@ -500,6 +517,9 @@ function rememberFromUser(session, text) {
   const guests = value.match(/(\d{1,4})\s*(?:\+\s*)?(?:people|guests?|pax|persons?|heads|personas|invitados|personnes|convidados|g[äa]ste|ospiti|人)/i);
   if (guests) state.guestCount = Number(guests[1]);
 
+  const date = dateIn(value);
+  if (date) state.date = date;
+
   const email = value.match(EMAIL_RE);
   if (email) {
     state.guest = { ...(state.guest ?? {}), email: email[0] };
@@ -515,6 +535,69 @@ function rememberFromUser(session, text) {
   if (ref) {
     state.refs = [...new Set([...(state.refs ?? []), ref[0].toUpperCase()])];
   }
+
+  rememberRequirements(session, value);
+}
+
+/* ------------------------------------------------- what they asked for -- */
+
+/** "under $2,000", "budget of 1500", "max $3k", "menos de 2000 dólares". */
+const BUDGET_PATTERNS = [
+  /\b(?:under|below|less than|at most|no more than|max(?:imum)?(?: of)?|up to|budget(?: of| is)?|keep it under)\s*\$?\s*([\d,.]+)\s*(k\b)?/i,
+  /\$?\s*([\d,.]+)\s*(k\b)?\s*(?:or less|or under|tops|max)\b/i,
+  /\b(?:menos de|hasta|presupuesto de|m[áa]ximo(?: de)?)\s*\$?\s*([\d,.]+)\s*(k\b)?/i,
+];
+
+/** A refinement with no number in it: "something cheaper", "anything bigger". */
+const CHEAPER = /\b(cheaper|less expensive|more affordable|lower price|lower budget|cheapest|budget[- ]friendly|m[áa]s barato|m[áa]s econ[óo]mico|menos caro|moins cher|g[üu]nstiger|pi[ùu] economico)\b/i;
+const PRICIER = /\b(nicer|fancier|more upscale|higher end|more premium|splurge|m[áa]s elegante|m[áa]s lujoso)\b/i;
+const BIGGER = /\b(bigger|larger|more space|more room|roomier|higher capacity|m[áa]s grande|m[áa]s espacio)\b/i;
+const SMALLER = /\b(smaller|cosier|cozier|more intimate|less space|m[áa]s peque[ñn]o|m[áa]s [íi]ntimo)\b/i;
+
+const OCCASIONS =
+  /\b(birthday|wedding|reception|launch party|launch|baby shower|bridal shower|graduation|reunion|corporate|team|offsite|holiday party|memorial|funeral|anniversary|bar mitzvah|bat mitzvah|quincea[ñn]era|retreat|conference|happy hour|engagement|rehearsal dinner|fundraiser|gala|workshop|photo ?shoot|cumplea[ñn]os|boda|fiesta)\b/i;
+
+/**
+ * A follow-up like "something cheaper" or "make it 60" is an edit to the
+ * request already in flight, not a new one. These are kept on session.state so
+ * the next search still carries the city, the date and everything else.
+ */
+function rememberRequirements(session, value) {
+  const state = session.state;
+
+  for (const pattern of BUDGET_PATTERNS) {
+    const match = value.match(pattern);
+    if (!match) continue;
+    const amount = Number(String(match[1]).replace(/[,\s]/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const dollars = match[2] ? amount * 1000 : amount;
+    // Ignore matches that are really a headcount or a year ("up to 60 guests").
+    if (/\d\s*(?:people|guests?|personas|invitados)/i.test(match[0]) || /^(19|20)\d\d$/.test(String(match[1]))) continue;
+    state.budgetCents = Math.round(dollars * 100);
+    state.preferCheaper = false;
+    break;
+  }
+
+  if (CHEAPER.test(value)) {
+    state.preferCheaper = true;
+    // "cheaper" means cheaper than whatever we last put in front of them.
+    const anchor = state.lastQuote?.totalCents ?? state.shownCeilingCents;
+    if (Number.isFinite(anchor)) state.budgetCents = Math.max(1, anchor - 1);
+  }
+  if (PRICIER.test(value)) {
+    state.preferCheaper = false;
+    state.budgetCents = undefined;
+  }
+
+  if (BIGGER.test(value) && Number.isFinite(state.guestCount)) state.wantsBigger = true;
+  if (SMALLER.test(value) && Number.isFinite(state.guestCount)) state.wantsBigger = false;
+
+  // "make it 60", "bump it to 80": a headcount change without the word guests.
+  const recount = value.match(/\b(?:make it|now|instead|change it to|bump it to|up it to|down to)\s+(\d{1,4})\b(?!\s*(?:pm|am|:|h\b|hours?|hrs?|\$))/i);
+  if (recount) state.guestCount = Number(recount[1]);
+
+  const occasion = value.match(OCCASIONS);
+  if (occasion) state.occasion = occasion[0].toLowerCase();
 }
 
 /** Record what a tool returned: listings for cards, quotes for the total, bookings for the truth. */
@@ -728,14 +811,35 @@ function finish(answer, session, turn, extraListings = []) {
       const listing = lookup(id);
       return listing?.name && body.toLowerCase().includes(listing.name.toLowerCase());
     });
-    cardIds = named.length ? named : pool.slice(0, 4);
+    cardIds = named.length ? named : pool.slice(0, MAX_CARDS);
   }
-  for (const id of unique(cardIds).slice(0, 6)) {
+  // A stated budget is a requirement, not a hint: show what meets it, cheapest
+  // first, and only fall back to the closest options when nothing does.
+  const hours = state.lastQuote?.hours;
+  const priceOf = (id) => estimateCents(lookup(id), { hours, guests: state.guestCount });
+  let shortlist = unique(cardIds).filter((id) => {
     const listing = lookup(id);
-    if (!listing || !fitsCapacity(listing, state.guestCount)) continue;
-    const card = cardFor(listing);
+    return listing && fitsCapacity(listing, state.guestCount);
+  });
+  if (Number.isFinite(state.budgetCents) || state.preferCheaper) {
+    const priced = shortlist.filter((id) => Number.isFinite(priceOf(id)));
+    priced.sort((a, b) => priceOf(a) - priceOf(b));
+    const affordable = Number.isFinite(state.budgetCents)
+      ? priced.filter((id) => priceOf(id) <= state.budgetCents)
+      : priced;
+    // Nothing under the budget still beats an empty answer: show the closest.
+    shortlist = (affordable.length ? affordable : priced.slice(0, 3)).concat(
+      shortlist.filter((id) => !Number.isFinite(priceOf(id))),
+    );
+  }
+  for (const id of shortlist.slice(0, MAX_CARDS)) {
+    const card = cardFor(lookup(id));
     if (card) parts.push(card);
   }
+
+  // "Cheaper" on the next turn means cheaper than what they just saw.
+  const shown = shortlist.slice(0, MAX_CARDS).map(priceOf).filter(Number.isFinite);
+  if (shown.length) state.shownCeilingCents = Math.max(...shown);
 
   // Photos, when asked for by tag or in plain words.
   const askedForPhotos = PHOTO_ASK.test(turn.userText);
