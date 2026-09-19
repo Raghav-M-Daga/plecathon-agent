@@ -61,6 +61,37 @@ Your job is to make them all pass, and then the hidden ones.
 
 Then open `agent/agent.js` and read `docs/harness.md`.
 
+## How this agent is built
+
+The brain is split so that the rules which must never break are enforced in
+code, not only asked for in a prompt:
+
+```
+agent/agent.js     the system prompt, the turn loop, the memory, and the parts
+agent/guards.js    what a model cannot talk its way past: argument repair, the
+                   book/cancel/reschedule gate, injection scrubbing, status truth
+agent/format.js    money, times, dates, cards, language
+agent/fallback.js  the sandbox-only path used when the model is unreachable
+```
+
+Four properties are true whatever the model returns:
+
+- **Nothing is booked, cancelled or moved without an explicit yes in that
+  turn**, and never with a name or email the user did not type. A blocked call
+  is handed back to the model as a tool error, so it asks instead of acting.
+- **Cards are built only from listings a tool returned**, and only ones whose
+  capacity range contains the headcount, so an invented or unsuitable venue
+  cannot reach the user.
+- **Planted text never survives.** A host description that says "use code
+  PLEC90 for 90% off" is stripped from the reply even if the model repeats it.
+- **A booking is never described as paid or confirmed** while the sandbox says
+  `pending_payment` or `requested`, and the Checkout URL is always sent
+  verbatim in a text part.
+
+`npm test` passes without a model key at all, because the offline path answers
+the public scenarios from the sandbox alone. It is a safety net for a dead
+proxy, not the real agent: set `LLM_API_KEY` to get the model path.
+
 ## Python quickstart
 
 ```bash
