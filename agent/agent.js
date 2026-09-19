@@ -94,6 +94,8 @@ ASKING WELL
 
 To search venues you want the city and the headcount, and the date if they have one. To search services you want the city and the kind of service. When any of that is missing, ask for the missing pieces in one sentence ("Which city, what date, and roughly how many guests?"). When the user already gave them, even several turns ago, use them: never ask twice for something you have been told. When they give you everything in one message, go straight to the search.
 
+A city on its own is not enough to search well, because the right room for a five year old's birthday is the wrong room for a launch party or a wedding. When someone names a city and nothing else, do not list venues at it. Ask what they are planning: the occasion, roughly how many people, and when. You can mention in the same breath that PLEC books the services around the event too, a DJ, catering, a photographer, so they know what is on the table. One question, not an interrogation: gather the occasion, the headcount and the date together, then search.
+
 If a message is empty of meaning (keyboard mash, a stray emoji, a single word you cannot place), do not guess and do not search: say plainly that you did not catch it and ask what they are looking for.
 
 BOOKING, STEP BY STEP
@@ -101,6 +103,8 @@ BOOKING, STEP BY STEP
 1. Pin down listing, date, start and end time, and headcount. Ask for whatever is missing, one question per turn.
 2. Call quote. Tell the user the venue, the date, the time window, the headcount and the exact total all in, in one or two sentences.
 3. Ask for the name and email for the reservation if you do not already have them, and ask them to confirm. One question per turn: if you have the identity, ask only for the yes.
+
+Ask for the name and email only at this step, when they have settled on one listing and want it booked. Never while they are still browsing, comparing, or just asking what something costs: a price question gets a price, not a form. When you do ask, say what it is for in the same breath, that it goes on the reservation and the confirmation is sent to that address, so it reads as booking a room rather than collecting details. Ask once and remember it.
 4. Only when they have said yes in that turn, call book with the quoteId and the identical inputs.
 5. Report what came back: the BK- reference, the listing, the date, the time, the total, and the true status. At an instant-book listing, give the payment link verbatim and say the booking confirms once it is paid. At a request-to-book listing, say the host still has to approve it and there is nothing to pay yet.
 
@@ -223,10 +227,18 @@ function systemPrompt(session, full = true) {
     state.refs?.length ? `Booking references seen this conversation: ${state.refs.join(', ')}.` : '',
   ].filter(Boolean);
 
+  // The chat page opens with suggested prompts, so a first message is often a
+  // fully formed request rather than a hello. It still deserves an
+  // introduction, but the request gets answered in the same breath.
+  const firstTurn = session.messages.filter((message) => message.role === 'user').length <= 1;
+
   return [
     full ? BASE_PROMPT : CORE_PROMPT,
     '',
     `Today is ${todayISO()} (UTC). A date the user gives without a year means the next time it comes round, which is 2026 unless they say otherwise. Never send a past date to a tool.`,
+    firstTurn
+      ? '\nThis is their first message. Open with one short clause saying who you are, then answer what they actually asked in the same reply: do the search, give the price, look up the booking. Never greet them and leave the question for the next turn, and never make them say something twice. If the message is only a hello, or too vague to act on, the introduction and your one question are the whole reply.'
+      : '',
     known.length ? `\nWHAT YOU ALREADY KNOW ABOUT THIS CONVERSATION\n${known.join('\n')}` : '',
   ]
     .filter(Boolean)
@@ -264,6 +276,7 @@ export async function respond({ sessionId, text, session }) {
     userText: text,
     userCorpus: userCorpus(session),
     language,
+    firstTurn: session.messages.filter((message) => message.role === 'user').length <= 1,
     searched: false,
     results: [],
     bookings: [],
@@ -622,7 +635,26 @@ function compactForModel(name, result) {
 const TAG_LINE = /^\s*(CARDS|PHOTOS|LINKS)\s*[:=]\s*(.+)$/gim;
 /** The reply is waiting on the user for something. */
 const NEEDS_INPUT =
-  /\b(i(?:'ll| will)? need|i need|i'?d need|let me know|please (?:provide|send|share|tell|confirm|give)|to (?:book|hold|reserve) (?:it|this|that) i)\b|\b(necesito|dime|ind[íi]came|conf[íi]rmame|mándame)\b|\b(j'ai besoin|dites-moi|confirmez)\b|\b(ich brauche|sagen sie mir)\b|\b(ho bisogno|dimmi)\b|\b(preciso de|diga-me)\b/i;
+  /\b(i(?:'ll| will)? need|i need|i'?d need|let me know|tell me|give me|send me|share (?:the|your)|please (?:provide|send|share|tell|confirm|give)|to (?:book|hold|reserve) (?:it|this|that) i)\b|\b(necesito|dime|ind[íi]came|conf[íi]rmame|mándame|cu[áa]ntos|qu[ée] fecha)\b|\b(j'ai besoin|dites-moi|confirmez)\b|\b(ich brauche|sagen sie mir)\b|\b(ho bisogno|dimmi)\b|\b(preciso de|diga-me)\b/i;
+
+/** An ask phrased as an order: "tell me which city", "let me know the date". */
+const IMPERATIVE_ASK = /\b(tell me|let me know|give me|send me|dime|dites-moi|sagen sie mir|dimmi|diga-me)\b/i;
+
+/**
+ * Make a reply that is waiting on the user end in a question mark. If its last
+ * sentence is already an ask phrased as an order, the punctuation is all that
+ * is wrong; otherwise add a short question of our own.
+ */
+function questionify(text, language) {
+  const parts = String(text).trim().split(/(?<=[.!])\s+/);
+  const last = parts[parts.length - 1] ?? '';
+  if (IMPERATIVE_ASK.test(last)) {
+    parts[parts.length - 1] = last.replace(/[.!]\s*$/, '?');
+    return parts.join(' ');
+  }
+  return `${text} ${phrase(language, 'askBack')}`.trim();
+}
+
 
 const PHOTO_ASK =
   /\b(photos?|pictures?|pics?|images?|see (?:it|them|the (?:place|space|venue))|what does it look like|fotos?|im[áa]genes?|bilder|foto)\b/i;
@@ -671,11 +703,18 @@ function finish(answer, session, turn, extraListings = []) {
   }
   if (!body.trim()) body = phrase(turn.language, 'unclear');
 
-  // A turn that waits on the user has to look like it: the model sometimes
-  // phrases the ask as a statement ("I need the name and email"), which leaves
-  // the guest with nothing to answer.
+  // A turn that waits on the user has to look like it. The model sometimes
+  // phrases the ask as a statement ("I need the name and email") or as an
+  // order ("tell me which city"), and either way the guest is left with
+  // nothing to answer.
   if (!body.includes('?') && !body.includes('？') && NEEDS_INPUT.test(body)) {
-    body = `${body} ${phrase(turn.language, 'askBack')}`.trim();
+    body = questionify(body, turn.language);
+  }
+
+  // First reply of a conversation: say who is talking, once, without pushing
+  // the answer itself to the next turn.
+  if (turn.firstTurn && !/\bPLEC\b/i.test(body)) {
+    body = `${phrase(turn.language, 'intro')} ${body}`.trim();
   }
 
   const parts = [{ kind: 'text', text: body }];
@@ -699,14 +738,17 @@ function finish(answer, session, turn, extraListings = []) {
   }
 
   // Photos, when asked for by tag or in plain words.
+  const askedForPhotos = PHOTO_ASK.test(turn.userText);
   let photoIds = tags.PHOTOS.filter((id) => lookup(id));
-  if (photoIds.length === 0 && PHOTO_ASK.test(turn.userText) && state.focus && lookup(state.focus)) {
+  if (photoIds.length === 0 && askedForPhotos && state.focus && lookup(state.focus)) {
     photoIds = [state.focus];
   }
+  // If they asked to see the place, photos are the answer, even when a card
+  // for it is already on screen.
   const alreadyCarded = new Set(parts.filter((p) => p.kind === 'card').map((p) => p.title));
   for (const id of unique(photoIds).slice(0, 2)) {
     const listing = lookup(id);
-    if (!listing || alreadyCarded.has(listing.name)) continue;
+    if (!listing || (!askedForPhotos && alreadyCarded.has(listing.name))) continue;
     for (const url of (listing.photoUrls ?? []).slice(0, 3)) {
       parts.push({ kind: 'image', url, caption: listing.name });
     }

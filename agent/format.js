@@ -131,6 +131,7 @@ const PHRASES = {
     scope: 'I can only help with venues, event services and bookings. What can I find for you?',
     askBack: 'Could you send those over?',
     emergency: 'If someone is hurt or in danger, call 911 now, before anything else.',
+    intro: "I'm the PLEC Concierge, I find and book venues and event services.",
   },
   es: {
     greet:
@@ -141,6 +142,7 @@ const PHRASES = {
     scope: 'Solo puedo ayudarte con espacios, servicios para eventos y reservas. ¿Qué te busco?',
     askBack: '¿Me los puedes dar?',
     emergency: 'Si hay alguien herido o en peligro, llama al 911 ahora, antes que nada.',
+    intro: 'Soy el Conserje de PLEC, encuentro y reservo espacios y servicios para eventos.',
   },
   fr: {
     greet:
@@ -151,6 +153,7 @@ const PHRASES = {
     scope: "Je ne peux aider que pour les lieux, les prestataires et les réservations. Que puis-je chercher ?",
     askBack: 'Pouvez-vous me les envoyer ?',
     emergency: "Si quelqu'un est blessé ou en danger, appelez le 911 immédiatement, avant tout.",
+    intro: 'Je suis le Concierge PLEC, je trouve et réserve des lieux et des prestataires.',
   },
   pt: {
     greet:
@@ -161,6 +164,7 @@ const PHRASES = {
     scope: 'Só posso ajudar com espaços, serviços de eventos e reservas. O que procuro para si?',
     askBack: 'Pode enviar-mos?',
     emergency: 'Se alguém está ferido ou em perigo, ligue 911 agora, antes de mais nada.',
+    intro: 'Sou o Concierge da PLEC, encontro e reservo espaços e serviços para eventos.',
   },
   de: {
     greet:
@@ -171,6 +175,7 @@ const PHRASES = {
     scope: 'Ich kann nur bei Veranstaltungsorten, Dienstleistern und Buchungen helfen. Wonach darf ich suchen?',
     askBack: 'Können Sie mir diese schicken?',
     emergency: 'Wenn jemand verletzt oder in Gefahr ist, rufen Sie sofort 911 an, vor allem anderen.',
+    intro: 'Ich bin der PLEC Concierge, ich finde und buche Veranstaltungsorte und Dienstleister.',
   },
   it: {
     greet:
@@ -181,6 +186,7 @@ const PHRASES = {
     scope: 'Posso aiutarti solo con locali, servizi per eventi e prenotazioni. Cosa cerco per te?',
     askBack: 'Me li puoi mandare?',
     emergency: 'Se qualcuno è ferito o in pericolo, chiama subito il 911, prima di tutto.',
+    intro: 'Sono il Concierge PLEC, trovo e prenoto locali e servizi per eventi.',
   },
 };
 
